@@ -29,11 +29,16 @@ Win *win;
 int nwin;
 int mwin;
 int onwin;
-int rows, cols;
+int rows,
+    cols;
 int sortlabels;
 int showwmnames;
 Font *font;
 Image *lightblue;
+
+XErrorHandler oldxerrorhandler;
+
+
 
 
 enum {
@@ -43,9 +48,16 @@ enum {
 
 static jmp_buf savebuf;
 
-int xerrorcatcher(XDisplay * disp, XErrorEvent * xe)
+int winwatchxerrorhandler(XDisplay * disp, XErrorEvent * xe)
 {
-    fprintf(stderr, "winwatch: X error\n");
+    char buf[100];
+
+    XGetErrorText(disp, xe->error_code, buf, 100);
+    fprintf(stderr, "winwatch: X error %s, request code %d\n", buf,
+	    xe->request_code);
+    XFlush(disp);
+    XSync(disp, False);
+    XSetErrorHandler(oldxerrorhandler);
     longjmp(savebuf, 1);
 }
 
@@ -54,7 +66,7 @@ void *erealloc(void *v, ulong n)
 {
     v = realloc(v, n);
     if (v == nil)
-        sysfatal("out of memory reallocating");
+	sysfatal("out of memory reallocating");
     return v;
 }
 
@@ -63,7 +75,7 @@ char *estrdup(char *s)
 {
     s = strdup(s);
     if (s == nil)
-        sysfatal("out of memory allocating");
+	sysfatal("out of memory allocating");
     return s;
 }
 
@@ -73,20 +85,27 @@ char *getproperty(XWindow w, Atom a)
     uchar *p;
     int fmt;
     Atom type;
-    ulong n, dummy;
+    ulong n,
+        dummy;
     int s;
 
     n = 100;
     p = nil;
 
+    oldxerrorhandler = XSetErrorHandler(winwatchxerrorhandler);
     s = XGetWindowProperty(dpy, w, a, 0, 100L, 0,
-                           AnyPropertyType, &type, &fmt, &n, &dummy, &p);
+			   AnyPropertyType, &type, &fmt, &n, &dummy, &p);
+    XFlush(dpy);
+    XSync(dpy, False);
+    XSetErrorHandler(oldxerrorhandler);
 
-    if(s  == 0)
-        return (char *) p;
-    else {
-        free(p);
-        return nil;
+
+    if (s == 0)
+	return (char *)p;
+    else
+    {
+	free(p);
+	return nil;
     }
 }
 
@@ -95,29 +114,40 @@ XWindow findname(XWindow w)
 {
     int i;
     uint nxwin;
-    XWindow dw1, dw2, *xwin;
+    XWindow dw1,
+        dw2,
+       *xwin;
     char *p;
     int s;
 
     p = getproperty(w, XA_WM_NAME);
-    if (p) {
-        free(p);
-        return w;
+    if (p)
+    {
+	free(p);
+	return w;
     }
 
+
+    oldxerrorhandler = XSetErrorHandler(winwatchxerrorhandler);
     s = XQueryTree(dpy, w, &dw1, &dw2, &xwin, &nxwin);
+    XFlush(dpy);
+    XSync(dpy, False);
+    XSetErrorHandler(oldxerrorhandler);
 
-    if (s == 0) {
-        XFree(xwin);
-        return 0;
+    if (s == 0)
+    {
+	XFree(xwin);
+	return 0;
     }
 
-    for (i = 0; i < nxwin; i++) {
-        w = findname(xwin[i]);
-        if (w != 0) {
-            XFree(xwin);
-            return w;
-        }
+    for (i = 0; i < nxwin; i++)
+    {
+	w = findname(xwin[i]);
+	if (w != 0)
+	{
+	    XFree(xwin);
+	    return w;
+	}
     }
 
     XFree(xwin);
@@ -138,110 +168,139 @@ int winlabelcmp(const void *w1, const void *w2)
     const Win *p2 = (Win *) w2;
     int rc;
     if ((rc = strcasecmp(p1->label, p2->label)) < 0)
-        return -1;
+	return -1;
     else if (rc > 0)
-        return 1;
+	return 1;
     else
-        return 0;
+	return 0;
 }
 
 
 void refreshwin(void)
 {
-    XWindow dw1, dw2, *xwin;
+    XWindow dw1,
+        dw2,
+       *xwin;
     XClassHint class;
     XWindowAttributes attr;
     char *label;
     char *wmname;
-    int i, nw;
+    int i,
+        nw;
     uint nxwin;
     Status s;
 
 
+    oldxerrorhandler = XSetErrorHandler(winwatchxerrorhandler);
     s = XQueryTree(dpy, root, &dw1, &dw2, &xwin, &nxwin);
+    XFlush(dpy);
+    XSync(dpy, False);
+    XSetErrorHandler(oldxerrorhandler);
 
-    if(s == 0) {
-        XFree(xwin);
-        return;
+    if (s == 0)
+    {
+	XFree(xwin);
+	return;
     }
     qsort(xwin, nxwin, sizeof(xwin[0]), wcmp);
 
     nw = 0;
-    for (i = 0; i < nxwin; i++) {
-        memset(&attr, 0, sizeof attr);
-        xwin[i] = findname(xwin[i]);
-        if (xwin[i] == 0)
-            continue;
+    for (i = 0; i < nxwin; i++)
+    {
+	memset(&attr, 0, sizeof attr);
+	xwin[i] = findname(xwin[i]);
+	if (xwin[i] == 0)
+	    continue;
 
-        s = XGetWindowAttributes(dpy, xwin[i], &attr);
+	oldxerrorhandler = XSetErrorHandler(winwatchxerrorhandler);
+	s = XGetWindowAttributes(dpy, xwin[i], &attr);
+	XFlush(dpy);
+	XSync(dpy, False);
+	XSetErrorHandler(oldxerrorhandler);
 
-        if (s == 0)
-            continue;
-        if (attr.width <= 0 || attr.override_redirect
-                || attr.map_state != IsViewable)
-            continue;
+	if (s == 0)
+	    continue;
+	if (attr.width <= 0 || attr.override_redirect
+	    || attr.map_state != IsViewable)
+	    continue;
 
-        s = XGetClassHint(dpy, xwin[i], &class);
+	oldxerrorhandler = XSetErrorHandler(winwatchxerrorhandler);
+	s = XGetClassHint(dpy, xwin[i], &class);
+	XFlush(dpy);
+	XSync(dpy, False);
+	XSetErrorHandler(oldxerrorhandler);
 
-        if (s == 0) {
-            free(class.res_name);
-            free(class.res_class);
-            continue;
-        }
+	if (s == 0)
+	{
+	    free(class.res_name);
+	    free(class.res_class);
+	    continue;
+	}
 
-        if (exclude != nil && regexec(exclude, class.res_name, nil, 0)) {
-            free(class.res_name);
-            free(class.res_class);
-            continue;
-        }
+	if (exclude != nil && regexec(exclude, class.res_name, nil, 0))
+	{
+	    free(class.res_name);
+	    free(class.res_class);
+	    continue;
+	}
 
-        wmname = getproperty(xwin[i], XA_WM_NAME);
+	wmname = getproperty(xwin[i], XA_WM_NAME);
 
-        if (wmname == nil) {
-            free(class.res_name);
-            free(class.res_class);
-            continue;
-        }
+	if (wmname == nil)
+	{
+	    free(class.res_name);
+	    free(class.res_class);
+	    continue;
+	}
 
-        if (showwmnames == 1)
-            label = wmname;
-        else
-            label = class.res_name;
+	if (showwmnames == 1)
+	    label = wmname;
+	else
+	    label = class.res_name;
 
-        if (nw < nwin && win[nw].n == xwin[i]
-                && strcmp(win[nw].label, label) == 0) {
-            nw++;
-            free(wmname);
-            free(class.res_name);
-            free(class.res_class);
-            continue;
-        }
+	if (nw < nwin && win[nw].n == xwin[i]
+	    && strcmp(win[nw].label, label) == 0)
+	{
+	    nw++;
+	    free(wmname);
+	    free(class.res_name);
+	    free(class.res_class);
+	    continue;
+	}
 
-        if (nw < nwin) {
-            free(win[nw].label);
-            win[nw].label = nil;
-        }
+	if (nw < nwin)
+	{
+	    free(win[nw].label);
+	    win[nw].label = nil;
+	}
 
-        if (nw >= mwin) {
-            mwin += 8;
-            win = erealloc(win, mwin * sizeof(win[0]));
-        }
-        win[nw].n = xwin[i];
-        win[nw].label = estrdup(label);
-        win[nw].dirty = 1;
-        win[nw].r = Rect(0, 0, 0, 0);
-        free(wmname);
-        free(class.res_name);
-        free(class.res_class);
-        nw++;
+	if (nw >= mwin)
+	{
+	    mwin += 8;
+	    win = erealloc(win, mwin * sizeof(win[0]));
+	}
+	win[nw].n = xwin[i];
+	win[nw].label = estrdup(label);
+	win[nw].dirty = 1;
+	win[nw].r = Rect(0, 0, 0, 0);
+	free(wmname);
+	free(class.res_name);
+	free(class.res_class);
+	nw++;
     }
+
+    oldxerrorhandler = XSetErrorHandler(winwatchxerrorhandler);
     XFree(xwin);
+    XFlush(dpy);
+    XSync(dpy, False);
+    XSetErrorHandler(oldxerrorhandler);
+
     while (nwin > nw)
-        free(win[--nwin].label);
+	free(win[--nwin].label);
     nwin = nw;
 
     if (sortlabels == 1)
-        qsort(win, nwin, sizeof(struct Win), winlabelcmp);
+	qsort(win, nwin, sizeof(struct Win), winlabelcmp);
 
     return;
 }
@@ -252,12 +311,12 @@ void drawnowin(int i)
     Rectangle r;
 
     r = Rect(0, 0, (Dx(screen->r) - 2 * MARGIN + PAD) / cols - PAD,
-             font->height);
+	     font->height);
     r = rectaddpt(rectaddpt
-                  (r,
-                   Pt(MARGIN + (PAD + Dx(r)) * (i / rows),
-                      MARGIN + (PAD + Dy(r)) * (i % rows))),
-                  screen->r.min);
+		  (r,
+		   Pt(MARGIN + (PAD + Dx(r)) * (i / rows),
+		      MARGIN + (PAD + Dy(r)) * (i % rows))),
+		  screen->r.min);
     draw(screen, insetrect(r, -1), lightblue, nil, ZP);
 }
 
@@ -266,8 +325,8 @@ void drawwin(int i)
 {
     draw(screen, win[i].r, lightblue, nil, ZP);
     _string(screen, addpt(win[i].r.min, Pt(2, 0)), display->black, ZP,
-            font, win[i].label, nil, strlen(win[i].label),
-            win[i].r, nil, ZP, SoverD);
+	    font, win[i].label, nil, strlen(win[i].label),
+	    win[i].r, nil, ZP, SoverD);
     border(screen, win[i].r, 1, display->black, ZP);
     win[i].dirty = 0;
 }
@@ -275,28 +334,32 @@ void drawwin(int i)
 
 int geometry(void)
 {
-    int i, ncols, z;
+    int i,
+        ncols,
+        z;
     Rectangle r;
 
     z = 0;
     rows = (Dy(screen->r) - 2 * MARGIN + PAD) / (font->height + PAD);
-    if (rows * cols < nwin || rows * cols >= nwin * 2) {
-        ncols = nwin <= 0 ? 1 : (nwin + rows - 1) / rows;
-        if (ncols != cols) {
-            cols = ncols;
-            z = 1;
-        }
+    if (rows * cols < nwin || rows * cols >= nwin * 2)
+    {
+	ncols = nwin <= 0 ? 1 : (nwin + rows - 1) / rows;
+	if (ncols != cols)
+	{
+	    cols = ncols;
+	    z = 1;
+	}
     }
 
     r = Rect(0, 0, (Dx(screen->r) - 2 * MARGIN + PAD) / cols - PAD,
-             font->height);
+	     font->height);
     for (i = 0; i < nwin; i++)
-        win[i].r =
-            rectaddpt(rectaddpt
-                      (r,
-                       Pt(MARGIN + (PAD + Dx(r)) * (i / rows),
-                          MARGIN + (PAD + Dy(r)) * (i % rows))),
-                      screen->r.min);
+	win[i].r =
+	    rectaddpt(rectaddpt
+		      (r,
+		       Pt(MARGIN + (PAD + Dx(r)) * (i / rows),
+			  MARGIN + (PAD + Dy(r)) * (i % rows))),
+		      screen->r.min);
 
     return z;
 }
@@ -308,13 +371,13 @@ void redraw(Image * screen, int all)
 
     all |= geometry();
     if (all)
-        draw(screen, screen->r, lightblue, nil, ZP);
+	draw(screen, screen->r, lightblue, nil, ZP);
     for (i = 0; i < nwin; i++)
-        if (all || win[i].dirty)
-            drawwin(i);
+	if (all || win[i].dirty)
+	    drawwin(i);
     if (!all)
-        for (; i < onwin; i++)
-            drawnowin(i);
+	for (; i < onwin; i++)
+	    drawnowin(i);
 
     onwin = nwin;
 }
@@ -323,7 +386,7 @@ void redraw(Image * screen, int all)
 void eresized(int new)
 {
     if (new && getwindow(display, Refmesg) < 0)
-        fprint(2, "can't reattach to window");
+	fprint(2, "can't reattach to window");
     geometry();
     redraw(screen, 1);
 }
@@ -351,33 +414,35 @@ void selectwin(XWindow win)
 
 void click(Mouse m)
 {
-    int i, j;
+    int i,
+        j;
 
     if (m.buttons == 0 || (m.buttons & ~4))
-        return;
+	return;
 
     for (i = 0; i < nwin; i++)
-        if (ptinrect(m.xy, win[i].r))
-            break;
+	if (ptinrect(m.xy, win[i].r))
+	    break;
     if (i == nwin)
-        return;
+	return;
 
     do
-        m = emouse();
+	m = emouse();
     while (m.buttons == 4);
 
-    if (m.buttons != 0) {
-        do
-            m = emouse();
-        while (m.buttons);
-        return;
+    if (m.buttons != 0)
+    {
+	do
+	    m = emouse();
+	while (m.buttons);
+	return;
     }
 
     for (j = 0; j < nwin; j++)
-        if (ptinrect(m.xy, win[j].r))
-            break;
+	if (ptinrect(m.xy, win[j].r))
+	    break;
     if (j != i)
-        return;
+	return;
 
     selectwin(win[i].n);
 }
@@ -386,7 +451,7 @@ void click(Mouse m)
 void usage(void)
 {
     fprint(2,
-           "usage: winwatch [-e exclude] [-W winsize] [-f font] [-s] [-w]\n");
+	   "usage: winwatch [-e exclude] [-W winsize] [-f font] [-s] [-w]\n");
     exits("usage");
 }
 
@@ -397,36 +462,35 @@ void main(int argc, char **argv)
     int Etimer;
     Event e;
 
-    XSetErrorHandler(xerrorcatcher);
-
     sortlabels = 0;
     showwmnames = 0;
 
     fontname = "/lib/font/bit/lucsans/unicode.8.font";
 
-    ARGBEGIN {
-    case 'W':
-        winsize = EARGF(usage());
-        break;
-    case 'f':
-        fontname = EARGF(usage());
-        break;
-    case 'e':
-        exclude = regcomp(EARGF(usage()));
-        if (exclude == nil)
-            sysfatal("Bad regexp");
-        break;
-    case 's':
-        sortlabels = 1;
-        break;
-    case 'w':
-        showwmnames = 1;
-        break;
-    default:
-        usage();
+    ARGBEGIN
+    {
+case 'W':
+	winsize = EARGF(usage());
+	break;
+case 'f':
+	fontname = EARGF(usage());
+	break;
+case 'e':
+	exclude = regcomp(EARGF(usage()));
+	if (exclude == nil)
+	    sysfatal("Bad regexp");
+	break;
+case 's':
+	sortlabels = 1;
+	break;
+case 'w':
+	showwmnames = 1;
+	break;
+default:
+	usage();
     }
     ARGEND if (argc)
-        usage();
+	    usage();
 
     /* moved up from original winwatch.c for p9p because there can be only one but we want to restart when needed */
     einit(Emouse | Ekeyboard);
@@ -435,7 +499,7 @@ void main(int argc, char **argv)
     dpy = XOpenDisplay("");
 
     if (dpy == nil)
-        sysfatal("open display: %r");
+	sysfatal("open display: %r");
 
     root = DefaultRootWindow(dpy);
     net_active_window = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
@@ -443,9 +507,9 @@ void main(int argc, char **argv)
     initdraw(0, 0, "winwatch");
     lightblue = allocimagemix(display, DPalebluegreen, DWhite);
     if (lightblue == nil)
-        sysfatal("allocimagemix: %r");
+	sysfatal("allocimagemix: %r");
     if ((font = openfont(display, fontname)) == nil)
-        sysfatal("font '%s' not found", fontname);
+	sysfatal("font '%s' not found", fontname);
 
 
     /* reentry point upon X server errors */
@@ -454,20 +518,22 @@ void main(int argc, char **argv)
     refreshwin();
     redraw(screen, 1);
 
-    for (;;) {
-        switch (eread(Emouse | Ekeyboard | Etimer, &e)) {
-        case Ekeyboard:
-            if (e.kbdc == 0x7F || e.kbdc == 'q')
-                exits(0);
-            break;
-        case Emouse:
-            if (e.mouse.buttons)
-                click(e.mouse);
-        /* fall through  */
-        default:                              /* Etimer */
-            refreshwin();
-            redraw(screen, 0);
-            break;
-        }
+    for (;;)
+    {
+	switch (eread(Emouse | Ekeyboard | Etimer, &e))
+	{
+	case Ekeyboard:
+	    if (e.kbdc == 0x7F || e.kbdc == 'q')
+		exits(0);
+	    break;
+	case Emouse:
+	    if (e.mouse.buttons)
+		click(e.mouse);
+	    /* fall through  */
+	default:		/* Etimer */
+	    refreshwin();
+	    redraw(screen, 0);
+	    break;
+	}
     }
 }
