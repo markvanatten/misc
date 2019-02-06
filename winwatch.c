@@ -129,7 +129,8 @@ XWindow findname(XWindow w)
     XSetErrorHandler(oldxerrorhandler);
 
     if (s == 0) {
-        XFree(xwin);
+        if (xwin != NULL)
+            XFree(xwin);
         return 0;
     }
 
@@ -186,7 +187,8 @@ void refreshwin(void)
     XSetErrorHandler(oldxerrorhandler);
 
     if (s == 0) {
-        XFree(xwin);
+        if (xwin != NULL)
+            XFree(xwin);
         return;
     }
     qsort(xwin, nxwin, sizeof(xwin[0]), wcmp);
@@ -216,11 +218,8 @@ void refreshwin(void)
         XSync(dpy, False);
         XSetErrorHandler(oldxerrorhandler);
 
-        if (s == 0) {
-            free(class.res_name);
-            free(class.res_class);
+        if (s == 0)
             continue;
-        }
 
         if (exclude != nil && regexec(exclude, class.res_name, nil, 0)) {
             free(class.res_name);
