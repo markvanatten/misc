@@ -114,6 +114,7 @@ XWindow findname(XWindow w)
     XWindow dw1, dw2, *xwin;
     char *p;
     int s;
+    Atom net_wm_name;
 
     p = getproperty(w, XA_WM_NAME);
     if (p) {
@@ -121,6 +122,12 @@ XWindow findname(XWindow w)
         return w;
     }
 
+    net_wm_name = XInternAtom (dpy, "_NET_WM_NAME", FALSE);
+    p = getproperty(w, net_wm_name);
+    if (p) {
+        free(p);
+        return w;
+    }
 
     oldxerrorhandler = XSetErrorHandler(winwatchxerrorhandler);
     s = XQueryTree(dpy, w, &dw1, &dw2, &xwin, &nxwin);
@@ -153,13 +160,35 @@ int wcmp(const void *w1, const void *w2)
     return *(XWindow *) w1 - *(XWindow *) w2;
 }
 
+/* unicode-aware case-insensitive strcmp,  taken from golang’s gc/subr.c */
+
+int _cistrcmp(char *p, char *q)
+{
+    Rune rp, rq;
+
+    while(*p || *q) {
+        if(*p == 0)
+            return +1;
+        if(*q == 0)
+            return -1;
+        p += chartorune(&rp, p);
+        q += chartorune(&rq, q);
+        rp = tolowerrune(rp);
+        rq = tolowerrune(rq);
+        if(rp < rq)
+            return -1;
+        if(rp > rq)
+            return +1;
+    }
+    return 0;
+}
 
 int winlabelcmp(const void *w1, const void *w2)
 {
     const Win *p1 = (Win *) w1;
     const Win *p2 = (Win *) w2;
     int rc;
-    if ((rc = strcasecmp(p1->label, p2->label)) < 0)
+    if ((rc = _cistrcmp(p1->label, p2->label)) < 0)
         return -1;
     else if (rc > 0)
         return 1;
@@ -178,6 +207,7 @@ void refreshwin(void)
     int i, nw;
     uint nxwin;
     Status s;
+    Atom net_wm_name;
 
 
     oldxerrorhandler = XSetErrorHandler(winwatchxerrorhandler);
@@ -227,12 +257,16 @@ void refreshwin(void)
             continue;
         }
 
-        wmname = getproperty(xwin[i], XA_WM_NAME);
+        net_wm_name = XInternAtom (dpy, "_NET_WM_NAME", FALSE);
+        wmname = getproperty(xwin[i], net_wm_name);
 
         if (wmname == nil) {
-            free(class.res_name);
-            free(class.res_class);
-            continue;
+            wmname = getproperty(xwin[i], XA_WM_NAME);
+            if (wmname == nil) {
+                free(class.res_name);
+                free(class.res_class);
+                continue;
+            }
         }
 
         if (showwmnames == 1)
